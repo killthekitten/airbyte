@@ -30,6 +30,7 @@ import io.airbyte.integrations.base.JavaBaseConstants;
 import io.airbyte.integrations.destination.NamingConventionTransformer;
 import io.airbyte.integrations.destination.StandardNameTransformer;
 import io.airbyte.integrations.standardtest.destination.DestinationAcceptanceTest;
+import io.airbyte.integrations.standardtest.destination.ProtocolVersion;
 import io.airbyte.integrations.standardtest.destination.comparator.TestDataComparator;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
@@ -67,6 +68,11 @@ public class BigQueryDestinationAcceptanceTest extends DestinationAcceptanceTest
   @Override
   protected String getImageName() {
     return "airbyte/destination-bigquery:dev";
+  }
+
+  @Override
+  public ProtocolVersion getProtocolVersion() {
+    return ProtocolVersion.V1;
   }
 
   @Override
