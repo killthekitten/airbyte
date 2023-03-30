@@ -54,7 +54,7 @@ test_data = [
 @pytest.mark.parametrize(
     "intercom_class,response_json,expected_output_token", test_data, ids=["base pagination", "companies pagination", "contacts pagination"]
 )
-def test_get_next_page_token(intercom_class, response_json, expected_output_token, requests_mock):
+def test_get_next_page_token(intercom_class, response_json, expected_output_token, requests_mock, config):
     """
     Test shows that next_page parameters are parsed correctly from the response object and could be passed for next request API call,
     """
@@ -62,12 +62,12 @@ def test_get_next_page_token(intercom_class, response_json, expected_output_toke
     requests_mock.get("https://api.intercom.io/conversations", json=response_json)
     response = requests.get("https://api.intercom.io/conversations")
     intercom_class = type("intercom_class", (intercom_class,), {"path": ""})
-    test = intercom_class(authenticator=NoAuth).next_page_token(response)
+    test = intercom_class(authenticator=NoAuth, **config).next_page_token(response)
 
     assert test == expected_output_token
 
 
-def test_switch_to_standard_endpoint_if_scroll_expired(requests_mock):
+def test_switch_to_standard_endpoint_if_scroll_expired(config, requests_mock):
     """
     Test shows that if scroll param expired we try sync with standard API.
     """
@@ -84,7 +84,7 @@ def test_switch_to_standard_endpoint_if_scroll_expired(requests_mock):
     url = "https://api.intercom.io/companies"
     requests_mock.get(url, json={"type": "company.list", "data": [{"type": "company", "id": "530370b477ad7120001d"}]})
 
-    stream1 = Companies(authenticator=NoAuth())
+    stream1 = Companies(authenticator=NoAuth(), **config)
 
     records = []
 
@@ -105,6 +105,18 @@ def test_check_connection_ok(config, requests_mock):
     assert not error_msg
 
 
+def test_check_connection_with_custom_api_endpoint_ok(config, requests_mock):
+    custom_api_endpoint = "https://example.com/"
+    config["api_endpoint"] = custom_api_endpoint
+    url = f"{custom_api_endpoint}tags"
+
+    requests_mock.get(url, json={})
+    ok, error_msg = SourceIntercom().check_connection(logger, config=config)
+
+    assert ok
+    assert not error_msg
+
+
 def test_check_connection_empty_config(config):
     config = {}
 
@@ -112,12 +124,20 @@ def test_check_connection_empty_config(config):
         SourceIntercom().check_connection(logger, config=config)
 
 
-def test_check_connection_invalid_config(config):
+def test_check_connection_without_start_date_fails(config):
     config.pop("start_date")
     ok, error_msg = SourceIntercom().check_connection(logger, config=config)
 
     assert not ok
     assert error_msg
+
+
+def test_check_connection_without_api_endpoint_fails(config):
+    config.pop("api_endpoint")
+    ok, error_msg = SourceIntercom().check_connection(logger, config=config)
+
+    assert not ok
+    assert error_msg == "The api_endpoint configuration hasn't been provided"
 
 
 def test_check_connection_exception(config):
@@ -197,7 +217,7 @@ def test_streams(config):
         (Teams, "GET", "/teams", {"teams": [{"type": "team", "id": "id"}]}, [{"id": "id", "type": "team"}]),
     ],
 )
-def test_read(stream, http_method, endpoint, response, expected, requests_mock):
+def test_read(stream, http_method, endpoint, response, expected, requests_mock, config):
     def get_mock(http_method, endpoint, response):
         if http_method == "POST":
             requests_mock.post(endpoint, json=response)
@@ -206,8 +226,9 @@ def test_read(stream, http_method, endpoint, response, expected, requests_mock):
         requests_mock.post("https://api.intercom.io/conversations/search", json=response)
         requests_mock.get("/companies/scroll", json=response)
 
+    config["start_date"] = 0
     get_mock(http_method, endpoint, response)
-    stream = stream(authenticator=NoAuth(), start_date=0)
+    stream = stream(authenticator=NoAuth(), **config)
     records = []
 
     for slice in stream.stream_slices(sync_mode=SyncMode.full_refresh):
@@ -298,7 +319,7 @@ def conversation_parts_responses():
     ]
 
 
-def test_conversation_part_has_conversation_id(requests_mock, single_conversation_response):
+def test_conversation_part_has_conversation_id(requests_mock, single_conversation_response, config):
     """
     Test shows that conversation_part records include the `conversation_id` field.
     """
@@ -306,7 +327,7 @@ def test_conversation_part_has_conversation_id(requests_mock, single_conversatio
     url = f"https://api.intercom.io/conversations/{conversation_id}"
     requests_mock.get(url, json=single_conversation_response)
 
-    conversation_parts = ConversationParts(authenticator=NoAuth())
+    conversation_parts = ConversationParts(authenticator=NoAuth(), **config)
 
     record_count = 0
     for record in conversation_parts.read_records(sync_mode=SyncMode.incremental, stream_slice={"id": conversation_id}):
@@ -316,12 +337,13 @@ def test_conversation_part_has_conversation_id(requests_mock, single_conversatio
     assert record_count == 2
 
 
-def test_conversation_part_filtering_based_on_conversation(requests_mock, conversation_parts_responses):
+def test_conversation_part_filtering_based_on_conversation(requests_mock, conversation_parts_responses, config):
     """
     Test shows that conversation_parts filters conversations (from parent stream) correctly
     """
     cursor_value = 1650988200
     state = {"updated_at": cursor_value}
+    config["start_date"] = 0
     expected_record_ids = set()
     for response_tuple in conversation_parts_responses:
         http_method = response_tuple[0]
@@ -332,7 +354,7 @@ def test_conversation_part_filtering_based_on_conversation(requests_mock, conver
             expected_record_ids.update([cp["id"] for cp in response["conversation_parts"]["conversation_parts"]])
 
     records = []
-    conversation_parts = ConversationParts(authenticator=NoAuth(), start_date=0)
+    conversation_parts = ConversationParts(authenticator=NoAuth(), **config)
     for slice in conversation_parts.stream_slices(sync_mode=SyncMode.incremental, stream_state=state):
         records.extend(list(conversation_parts.read_records(sync_mode=SyncMode.incremental, stream_slice=slice, stream_state=state)))
 

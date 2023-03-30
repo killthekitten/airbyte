@@ -23,15 +23,14 @@ from .utils import IntercomRateLimiter as limiter
 
 
 class IntercomStream(HttpStream, ABC):
-    url_base = "https://api.intercom.io/"
-
     primary_key = "id"
     data_fields = ["data"]
     # https://developers.intercom.com/intercom-api-reference/reference/pagination-cursor
     page_size = 150  # max available
 
-    def __init__(self, authenticator: AuthBase, start_date: str = None, **kwargs):
+    def __init__(self, authenticator: AuthBase, api_endpoint: str, start_date: str = None, **kwargs):
         self.start_date = start_date
+        self.api_endpoint = api_endpoint
         super().__init__(authenticator=authenticator)
 
     @property
@@ -47,6 +46,10 @@ class IntercomStream(HttpStream, ABC):
     @property
     def availability_strategy(self) -> Optional["AvailabilityStrategy"]:
         return None
+
+    @property
+    def url_base(self) -> str:
+        return self.api_endpoint
 
     def next_page_token(self, response: requests.Response, **kwargs) -> Optional[Mapping[str, Any]]:
         """
@@ -102,8 +105,8 @@ class IncrementalIntercomStream(IntercomStream, ABC):
     def state_checkpoint_interval(self):
         return self.page_size
 
-    def __init__(self, authenticator: AuthBase, start_date: str = None, **kwargs):
-        super().__init__(authenticator, start_date, **kwargs)
+    def __init__(self, authenticator: AuthBase, **kwargs):
+        super().__init__(authenticator, **kwargs)
         self.has_old_records = False
 
     def filter_by_state(self, stream_state: Mapping[str, Any] = None, record: Mapping[str, Any] = None) -> Iterable:
@@ -179,7 +182,6 @@ class IncrementalIntercomSearchStream(IncrementalIntercomStream):
 
 
 class ChildStreamMixin(IncrementalIntercomStream):
-
     parent_stream_class: Optional[IntercomStream] = None
     slice_key: str = "id"
     record_key: str = "id"
@@ -189,7 +191,11 @@ class ChildStreamMixin(IncrementalIntercomStream):
         """
         Returns the instance of parent stream, if the child stream has a `parent_stream_class` dependency.
         """
-        return self.parent_stream_class(authenticator=self.authenticator, start_date=self.start_date) if self.parent_stream_class else None
+        return (
+            self.parent_stream_class(authenticator=self.authenticator, start_date=self.start_date, api_endpoint=self.api_endpoint)
+            if self.parent_stream_class
+            else None
+        )
 
     def get_updated_state(self, current_stream_state: MutableMapping[str, Any], latest_record: Mapping[str, Any]) -> Mapping[str, Any]:
         """UPDATING THE STATE OBJECT:
@@ -277,7 +283,6 @@ class Companies(IncrementalIntercomStream):
             self._total_count = data["total_count"]
             self.logger.info(f"found {self._total_count} companies")
         if self.can_use_scroll():
-
             scroll_param = data.get("scroll_param")
 
             # this stream always has only one data field
@@ -508,8 +513,13 @@ class SourceIntercom(AbstractSource):
 
     def check_connection(self, logger, config) -> Tuple[bool, any]:
         authenticator = VersionApiAuthenticator(token=config["access_token"])
+        api_endpoint = config.get("api_endpoint")
+
+        if not api_endpoint:
+            return False, "The api_endpoint configuration hasn't been provided"
+
         try:
-            url = urljoin(IntercomStream.url_base, "/tags")
+            url = urljoin(api_endpoint, "/tags")
             auth_headers = {"Accept": "application/json", **authenticator.get_auth_header()}
             session = requests.get(url, headers=auth_headers)
             session.raise_for_status()
@@ -520,6 +530,7 @@ class SourceIntercom(AbstractSource):
     def streams(self, config: Mapping[str, Any]) -> List[Stream]:
         config["start_date"] = datetime.strptime(config["start_date"], "%Y-%m-%dT%H:%M:%SZ").timestamp()
         AirbyteLogger().log("INFO", f"Using start_date: {config['start_date']}")
+        AirbyteLogger().log("INFO", f"Using api_endpoint: {config['api_endpoint']}")
 
         auth = VersionApiAuthenticator(token=config["access_token"])
         return [

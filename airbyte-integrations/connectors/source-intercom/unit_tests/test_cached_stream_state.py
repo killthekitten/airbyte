@@ -8,9 +8,12 @@ from airbyte_cdk.sources.streams.http.auth import NoAuth
 from source_intercom.source import ConversationParts, Conversations
 from source_intercom.utils import EagerlyCachedStreamState as stream_state_cache
 
+from .helpers import build_config
+
 # Define the Stream instances for the tests
-INTERCOM_STREAM = Conversations(authenticator=NoAuth(), start_date=0)
-INTERCOM_SUB_STREAM = ConversationParts(authenticator=NoAuth(), start_date=0)
+DEFAULT_CONFIG = build_config()
+INTERCOM_STREAM = Conversations(authenticator=NoAuth(), **DEFAULT_CONFIG)
+INTERCOM_SUB_STREAM = ConversationParts(authenticator=NoAuth(), **DEFAULT_CONFIG)
 
 
 @pytest.mark.parametrize(
